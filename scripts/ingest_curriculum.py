@@ -4,6 +4,8 @@ CBC Curriculum Ingestion Script
 Loads curriculum content into ChromaDB vector store
 """
 
+from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
@@ -11,17 +13,17 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from typing import List, Dict
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Chroma
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.docstore.document import Document
+from typing import Dict, List
+from langchain_core.documents import Document
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core.config import settings
 from app.core.logging import logger
 
+
 # Sample CBC Curriculum Content
-# In production, this would come from actual CBC textbooks/materials
 CBC_CURRICULUM = {
     "grade_7_math": [
         {
@@ -462,8 +464,7 @@ def ingest_curriculum():
         collection_name="cbc_curriculum"
     )
     
-    # Persist
-    vectorstore.persist()
+    # No need to call persist() in Chroma 0.4+
     print("   ✅ Vector store created and persisted")
     
     # Test the store
@@ -477,10 +478,16 @@ def ingest_curriculum():
         print(f"\n   Test Query: '{query}'")
         print(f"   Grade: {grade}, Subject: {subject}")
         
+        # Fixed filter syntax for ChromaDB
         results = vectorstore.similarity_search(
             query,
             k=2,
-            filter={"grade": grade, "subject": subject}
+            filter={
+                "$and": [
+                    {"grade": {"$eq": grade}},
+                    {"subject": {"$eq": subject}}
+                ]
+            }
         )
         
         print(f"   Found: {len(results)} relevant chunks")

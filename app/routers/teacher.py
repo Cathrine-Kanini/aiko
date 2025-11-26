@@ -1,6 +1,6 @@
 # app/routers/teacher.py
 from fastapi import APIRouter, Depends
-from app.services.llm_service import LLMService
+from app.services.llm_service import LLMService # type: ignore
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 
@@ -33,7 +33,7 @@ Format as structured JSON."""
     response = await llm.generate(prompt)
     
     # Save to database
-    lesson_plan = await db.lesson_plans.create({
+    lesson_plan = await db.lesson_plans.create({ # type: ignore
         "subject": subject,
         "grade": grade,
         "topic": topic,

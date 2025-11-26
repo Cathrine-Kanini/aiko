@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     # API Keys
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
-    
+    google_api_key: Optional[str] = None
+    llm_provider: str = "google"  # Can be "openai", "anthropic", or "google"
+
     # App Info
     app_name: str = "AikoLearn API"
     app_version: str = "0.1.0"
@@ -27,9 +29,13 @@ class Settings(BaseSettings):
     rate_limit: int = 60  # requests per minute
     
     # Model Settings
-    llm_model: str = "gpt-3.5-turbo"
+    # llm_model: str = "gemini-1.5-flash"  # Free tier Gemini model
+
+    llm_model: str = "gemini-1.5-flash"
     llm_temperature: float = 0.7
     max_tokens: int = 1000
+
+
     
     # Vector DB
     chroma_persist_dir: str = "./chroma_db"
@@ -46,18 +52,18 @@ settings = Settings()
 def validate_settings():
     """Validate that required settings are present"""
     errors = []
-    
-    if not settings.openai_api_key and not settings.anthropic_api_key:
-        errors.append("Either OPENAI_API_KEY or ANTHROPIC_API_KEY must be set")
-    
+
+    if not settings.openai_api_key and not settings.anthropic_api_key and not settings.google_api_key:
+        errors.append("At least one API key must be set (OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY)")
+
     if errors:
         raise ValueError(f"Configuration errors: {', '.join(errors)}")
-    
+
     return True
 
 # Validate on import
 try:
     validate_settings()
-    print("✅ Configuration validated successfully")
+    print("Configuration validated successfully")
 except ValueError as e:
-    print(f"⚠️  Configuration warning: {e}")
+    print(f"Configuration warning: {e}")
