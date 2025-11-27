@@ -8,6 +8,8 @@ import time
 import json
 import re
 import random
+from mangum import Mangum
+import asyncio  # Add this import
 
 from app.core.config import settings
 from app.core.logging import logger
@@ -804,6 +806,11 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal server error. Please try again later."}
     )
 
+# ============================================
+# ✅ MANGUM HANDLER FOR VERCEL - PUT AT THE END
+# ============================================
+
+handler = Mangum(app)
 
 if __name__ == "__main__":
     import uvicorn

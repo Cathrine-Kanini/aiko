@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "main.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "main.py"
+    }
+  ],
+  "env": {
+    "ENVIRONMENT": "production",
+    "LLM_PROVIDER": "google",
+    "LLM_MODEL": "gemini-1.5-flash",
+    "DEBUG": "False",
+    "LOG_LEVEL": "INFO",
+    "CHROMA_PERSIST_DIR": "/tmp/chroma_db"
+  }
+}

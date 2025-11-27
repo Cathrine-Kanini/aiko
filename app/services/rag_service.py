@@ -12,6 +12,9 @@ from langchain_openai import ChatOpenAI
 import google.generativeai as genai
 from langchain_chroma import Chroma
 
+# NEW PINECONE SDK
+from pinecone import Pinecone, ServerlessSpec
+
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -24,6 +27,8 @@ class RAGService:
         self._vectorstore = None
         self._llm = None
         self.llm_type = None
+        self._pinecone_client = None
+        self._pinecone_index = None
         self._initialize_llm()
     
     # ---------------------
@@ -45,10 +50,37 @@ class RAGService:
         return self._embeddings
     
     # ---------------------
+    # NEW PINECONE INITIALIZATION
+    # ---------------------
+    @property
+    def pinecone_index(self):
+        """Lazy-loaded Pinecone index using new SDK"""
+        if self._pinecone_index is None and settings.pinecone_api_key:
+            try:
+                logger.info("Initializing Pinecone (new SDK)...")
+                
+                # Initialize Pinecone client
+                self._pinecone_client = Pinecone(api_key=settings.pinecone_api_key)
+                
+                # Get the index
+                self._pinecone_index = self._pinecone_client.Index(settings.pinecone_index_name)
+                
+                logger.info(f"Pinecone initialized successfully. Index: {settings.pinecone_index_name}")
+            except Exception as e:
+                logger.error(f"Pinecone initialization failed: {e}")
+                logger.warning("Falling back to ChromaDB")
+        return self._pinecone_index
+
+    # ---------------------
     # Lazy-loaded vector store with auto-recovery
     # ---------------------
     @property
     def vectorstore(self):
+        # Use Pinecone if available
+        if self.pinecone_index:
+            logger.info("Using Pinecone as vector store")
+            return None  # Pinecone will be used instead of Chroma
+            
         if self._vectorstore is None:
             logger.info("Connecting to Chroma vectorstore...")
             
@@ -182,6 +214,10 @@ class RAGService:
     ) -> List[Document]:
         """Retrieve relevant context from vectorstore."""
         try:
+            # Use Pinecone if available
+            if self.pinecone_index:
+                return self._retrieve_from_pinecone(query, grade, subject, k)
+            
             # Normalize inputs
             subject_normalized = subject.lower().strip()
             grade_normalized = grade.strip()
@@ -207,6 +243,54 @@ class RAGService:
 
         except Exception as e:
             logger.error(f"Context retrieval failed: {e}")
+            return []
+
+    # ---------------------
+    # UPDATED PINECONE RETRIEVAL
+    # ---------------------
+    def _retrieve_from_pinecone(
+        self, 
+        query: str, 
+        grade: str, 
+        subject: str, 
+        k: int = 3
+    ) -> List[Document]:
+        """Retrieve context from Pinecone using new SDK."""
+        try:
+            # Generate query embedding
+            query_embedding = self.embeddings.embed_query(query)
+            
+            # Build filter for new SDK
+            filter_dict = {
+                "grade": {"$eq": grade.strip()},
+                "subject": {"$eq": subject.lower().strip()}
+            }
+            
+            logger.info(f"Querying Pinecone: grade={grade}, subject={subject}, k={k}")
+            
+            # Query Pinecone (new SDK syntax)
+            results = self.pinecone_index.query(
+                vector=query_embedding,
+                top_k=k,
+                include_metadata=True,
+                filter=filter_dict
+            )
+            
+            # Convert to Document format
+            documents = []
+            if results and hasattr(results, 'matches'):
+                for match in results.matches:
+                    doc = Document(
+                        page_content=match.metadata.get('content', ''),
+                        metadata=match.metadata
+                    )
+                    documents.append(doc)
+            
+            logger.info(f"Retrieved {len(documents)} context chunks from Pinecone.")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Pinecone retrieval failed: {e}")
             return []
 
     # ---------------------
@@ -335,12 +419,24 @@ Your response:
     def check_vectorstore_health(self) -> Dict:
         """Check if vectorstore is accessible and has data."""
         try:
-            # Try to get collection info
+            # Check Pinecone
+            if self.pinecone_index:
+                stats = self.pinecone_index.describe_index_stats()
+                return {
+                    "status": "healthy",
+                    "vectorstore": "pinecone",
+                    "total_vectors": stats.total_vector_count if hasattr(stats, 'total_vector_count') else 0,
+                    "dimension": stats.dimension if hasattr(stats, 'dimension') else 0,
+                    "namespaces": stats.namespaces if hasattr(stats, 'namespaces') else {}
+                }
+            
+            # Check ChromaDB
             collection = self.vectorstore._collection
             count = collection.count()
             
             return {
                 "status": "healthy",
+                "vectorstore": "chroma",
                 "document_count": count,
                 "collection_name": collection.name
             }
@@ -354,6 +450,12 @@ Your response:
     def reset_vectorstore(self) -> bool:
         """Reset the vectorstore (use with caution)."""
         try:
+            # Pinecone
+            if self.pinecone_index:
+                logger.warning("Pinecone reset not implemented - use Pinecone dashboard")
+                return False
+            
+            # ChromaDB
             persist_dir = Path(settings.chroma_persist_dir)
             
             # Close existing connection
