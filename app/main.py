@@ -7,6 +7,9 @@ from datetime import datetime, date
 import time
 import json
 import re
+import os
+import logging
+import sys
 import random
 from mangum import Mangum
 import asyncio  # Add this import
@@ -14,6 +17,7 @@ import asyncio  # Add this import
 from app.core.config import settings
 from app.core.logging import logger
 from app.services.rag_service import rag_service
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -32,6 +36,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Vercel-specific configuration
+if os.getenv("VERCEL"):
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.info("🚀 Running on Vercel environment")
+    
+    # Set environment variables for ChromaDB
+    os.environ["CHROMA_PERSIST_DIR"] = "/tmp/chroma_db"
+
 
 # Request timing middleware
 @app.middleware("http")

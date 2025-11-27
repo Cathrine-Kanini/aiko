@@ -31,6 +31,19 @@ class RAGService:
         self._pinecone_index = None
         self._initialize_llm()
     
+    def _get_chroma_persist_dir(self) -> Path:
+        """Get ChromaDB persistence directory based on environment."""
+        if os.getenv("VERCEL"):
+            # Vercel: use /tmp directory (only writable location)
+            persist_dir = Path("/tmp/chroma_db")
+            logger.info(f"🔧 Vercel environment: Using ChromaDB path: {persist_dir}")
+        else:
+            # Local development: use your original path
+            persist_dir = Path(settings.chroma_persist_dir)
+            logger.info(f"🔧 Local environment: Using ChromaDB path: {persist_dir}")
+        
+        return persist_dir
+    
     # ---------------------
     # Lazy-loaded embeddings
     # ---------------------
@@ -72,7 +85,7 @@ class RAGService:
         return self._pinecone_index
 
     # ---------------------
-    # Lazy-loaded vector store with auto-recovery
+    # Lazy-loaded vector store with Vercel support
     # ---------------------
     @property
     def vectorstore(self):
@@ -84,9 +97,14 @@ class RAGService:
         if self._vectorstore is None:
             logger.info("Connecting to Chroma vectorstore...")
             
-            persist_dir = Path(settings.chroma_persist_dir)
+            persist_dir = self._get_chroma_persist_dir()
             
             try:
+                # Vercel-specific: Ensure /tmp directory exists
+                if os.getenv("VERCEL"):
+                    persist_dir.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"✅ Created ChromaDB directory on Vercel: {persist_dir}")
+                
                 # Try to connect to existing database
                 self._vectorstore = Chroma(
                     persist_directory=str(persist_dir),
@@ -98,32 +116,56 @@ class RAGService:
             except Exception as e:
                 logger.error(f"Vectorstore connection failed: {e}")
                 
-                # Check if it's a schema error
-                if "no such column" in str(e).lower() or "operational" in str(e).lower():
-                    logger.warning("Detected corrupted/incompatible ChromaDB. Attempting recovery...")
+                # Check if it's a schema error or Vercel-specific issue
+                if "no such column" in str(e).lower() or "operational" in str(e).lower() or os.getenv("VERCEL"):
+                    logger.warning("Detected ChromaDB issue. Attempting recovery...")
                     
-                    # Backup old database if it exists
-                    if persist_dir.exists():
-                        backup_dir = persist_dir.parent / f"{persist_dir.name}_backup"
-                        if backup_dir.exists():
-                            shutil.rmtree(backup_dir)
+                    # On Vercel, always create fresh (ephemeral storage)
+                    if os.getenv("VERCEL"):
+                        logger.info("🔄 Vercel environment: Creating fresh in-memory ChromaDB")
+                        try:
+                            # Use in-memory ChromaDB on Vercel
+                            from chromadb import EphemeralClient
+                            import chromadb
+                            
+                            client = EphemeralClient()
+                            self._vectorstore = Chroma(
+                                client=client,
+                                embedding_function=self.embeddings,
+                                collection_name="cbc_curriculum_vercel"
+                            )
+                            logger.info("✅ Created in-memory ChromaDB for Vercel")
+                        except ImportError:
+                            logger.warning("EphemeralClient not available, using regular ChromaDB")
+                            # Fall back to regular ChromaDB
+                            self._vectorstore = Chroma(
+                                persist_directory=str(persist_dir),
+                                embedding_function=self.embeddings,
+                                collection_name="cbc_curriculum"
+                            )
+                    else:
+                        # Local development recovery
+                        if persist_dir.exists():
+                            backup_dir = persist_dir.parent / f"{persist_dir.name}_backup"
+                            if backup_dir.exists():
+                                shutil.rmtree(backup_dir)
+                            
+                            shutil.move(str(persist_dir), str(backup_dir))
+                            logger.info(f"Backed up old database to {backup_dir}")
                         
-                        shutil.move(str(persist_dir), str(backup_dir))
-                        logger.info(f"Backed up old database to {backup_dir}")
-                    
-                    # Create fresh vectorstore
-                    try:
-                        persist_dir.mkdir(parents=True, exist_ok=True)
-                        self._vectorstore = Chroma(
-                            persist_directory=str(persist_dir),
-                            embedding_function=self.embeddings,
-                            collection_name="cbc_curriculum"
-                        )
-                        logger.info("Created fresh vectorstore successfully.")
-                        logger.warning("⚠️ Vector database was reset. You'll need to re-ingest your curriculum data.")
-                    except Exception as e2:
-                        logger.error(f"Failed to create fresh vectorstore: {e2}")
-                        raise
+                        # Create fresh vectorstore
+                        try:
+                            persist_dir.mkdir(parents=True, exist_ok=True)
+                            self._vectorstore = Chroma(
+                                persist_directory=str(persist_dir),
+                                embedding_function=self.embeddings,
+                                collection_name="cbc_curriculum"
+                            )
+                            logger.info("Created fresh vectorstore successfully.")
+                            logger.warning("⚠️ Vector database was reset. You'll need to re-ingest your curriculum data.")
+                        except Exception as e2:
+                            logger.error(f"Failed to create fresh vectorstore: {e2}")
+                            raise
                 else:
                     raise
                     
@@ -456,7 +498,7 @@ Your response:
                 return False
             
             # ChromaDB
-            persist_dir = Path(settings.chroma_persist_dir)
+            persist_dir = self._get_chroma_persist_dir()
             
             # Close existing connection
             self._vectorstore = None
